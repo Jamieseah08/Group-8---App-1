@@ -1,0 +1,6 @@
+{
+  "name": "SmartCap",
+  "description": "Smart Invoice Capture app for finance staff to extract, review, and verify invoice information with AI confidence scoring and duplicate detection.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
