@@ -378,6 +378,21 @@ export default function App() {
             reviewRequired: true,
           },
         },
+        lineItems: Array.isArray(extractedData.lineItems) && extractedData.lineItems.length > 0
+          ? extractedData.lineItems.map((item: any) => ({
+              description: item.description || 'Not stated',
+              quantity: item.quantity || 'Not stated',
+              unitPrice: item.unitPrice || 'Not stated',
+              amount: item.amount || 'Not stated',
+            }))
+          : [
+              {
+                description: 'Not stated',
+                quantity: 'Not stated',
+                unitPrice: 'Not stated',
+                amount: 'Not stated',
+              },
+            ],
         hasMissingInfo: false,
         hasLowConfidence: false,
         isDuplicateRisk: false,
@@ -514,6 +529,31 @@ export default function App() {
 
     setInvoices((prev) =>
       prev.map((inv) => (inv.id === selectedInvoice.id ? updatedInvoiceObj : inv))
+    );
+  };
+
+  const handleLineItemsChange = (newLineItems: any[]) => {
+    if (!selectedInvoice) return;
+    const nowStr = new Date().toLocaleString('en-SG', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+    const newAuditLog: AuditLog = {
+      id: `LOG-LINE-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: nowStr,
+      user: 'Madam Lim (Accounts Exec)',
+      action: 'Updated line item details for Three-Way Matching',
+    };
+    setInvoices((prev) =>
+      prev.map((inv) =>
+        inv.id === selectedInvoice.id
+          ? {
+              ...inv,
+              lineItems: newLineItems,
+              auditLogs: [newAuditLog, ...inv.auditLogs],
+            }
+          : inv
+      )
     );
   };
 
@@ -776,6 +816,8 @@ export default function App() {
                   <FieldEditor
                     fields={selectedInvoice.fields}
                     onFieldChange={handleFieldChange}
+                    lineItems={selectedInvoice.lineItems || []}
+                    onLineItemsChange={handleLineItemsChange}
                   />
                 </div>
 

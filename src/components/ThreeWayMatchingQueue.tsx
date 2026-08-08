@@ -80,6 +80,11 @@ export const ThreeWayMatchingQueue: React.FC<ThreeWayMatchingQueueProps> = ({
       if (res) {
         setAuthUser(res.user);
         setToken(res.accessToken);
+      } else {
+        setFeedback({
+          type: 'error',
+          text: 'Google Sign-In was closed or cancelled before completing.',
+        });
       }
     } catch (err: any) {
       setFeedback({
@@ -158,9 +163,11 @@ export const ThreeWayMatchingQueue: React.FC<ThreeWayMatchingQueueProps> = ({
         if (onInvoiceExported) {
           onInvoiceExported([inv.id], nowStr);
         }
+        const actionLabel =
+          res.actionType === 'updated' ? 'Updated in Google Sheet' : 'Saved to Google Sheet';
         setFeedback({
           type: 'success',
-          text: `Saved Invoice ${inv.fields.invoiceNumber?.value || inv.id} to Google Sheet under "${SHEET_NAME}"! Status set to "Ready for Matching".`,
+          text: `${actionLabel} for Invoice ${inv.fields.invoiceNumber?.value || inv.id} under "${SHEET_NAME}"! Status set to "Ready for Matching".`,
           url: SPREADSHEET_URL,
         });
       } else {
@@ -221,7 +228,7 @@ export const ThreeWayMatchingQueue: React.FC<ThreeWayMatchingQueueProps> = ({
         }
         setFeedback({
           type: 'success',
-          text: `Successfully saved all ${matchingInvoices.length} invoice(s) to Google Sheet under "${SHEET_NAME}"! Status set to "Ready for Matching".`,
+          text: `${res.message} Status set to "Ready for Matching".`,
           url: SPREADSHEET_URL,
         });
       } else {
@@ -417,6 +424,7 @@ export const ThreeWayMatchingQueue: React.FC<ThreeWayMatchingQueueProps> = ({
                 <th className="py-3 px-4">Supplier & Tax ID</th>
                 <th className="py-3 px-4">Invoice # & Date</th>
                 <th className="py-3 px-4">PO #</th>
+                <th className="py-3 px-4">Extracted Line Items</th>
                 <th className="py-3 px-4">Grand Total</th>
                 <th className="py-3 px-4">Payment Method</th>
                 <th className="py-3 px-4">Approval Status</th>
@@ -427,7 +435,7 @@ export const ThreeWayMatchingQueue: React.FC<ThreeWayMatchingQueueProps> = ({
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {filteredInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                  <td colSpan={9} className="py-12 text-center text-slate-400">
                     <GitCompare className="w-10 h-10 mx-auto mb-2 text-emerald-400/60" />
                     <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                       No invoices in the Three-Way Matching Queue
@@ -494,6 +502,32 @@ export const ThreeWayMatchingQueue: React.FC<ThreeWayMatchingQueueProps> = ({
                         )}
                       </td>
 
+                      {/* Line Items Cell */}
+                      <td className="py-3.5 px-4">
+                        {inv.lineItems && inv.lineItems.length > 0 ? (
+                          <div className="space-y-1 max-w-xs">
+                            <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
+                              {inv.lineItems.length} Line Item{inv.lineItems.length > 1 ? 's' : ''}
+                            </span>
+                            <div className="space-y-0.5 text-[11px] text-slate-600 dark:text-slate-300">
+                              {inv.lineItems.slice(0, 2).map((item, idx) => (
+                                <div key={idx} className="truncate" title={`${item.description} | Qty: ${item.quantity} | Price: ${item.unitPrice}`}>
+                                  <span className="font-medium text-slate-800 dark:text-slate-200">{item.description}</span>
+                                  <span className="text-slate-400 ml-1">(Qty: {item.quantity}, Price: {item.unitPrice})</span>
+                                </div>
+                              ))}
+                              {inv.lineItems.length > 2 && (
+                                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium italic">
+                                  +{inv.lineItems.length - 2} more item(s)...
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 italic">Not stated</span>
+                        )}
+                      </td>
+
                       <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white text-sm">
                         {currency} ${total}
                       </td>
@@ -541,7 +575,7 @@ export const ThreeWayMatchingQueue: React.FC<ThreeWayMatchingQueueProps> = ({
                               ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-100 hover:text-emerald-800 dark:hover:bg-emerald-900/50'
                               : 'bg-emerald-600 hover:bg-emerald-500 text-white'
                           }`}
-                          title="Save details (Invoice #, Supplier, Date, PO #, Total Payable, Extraction Confidence, Payment Method, Review Status, Matching Status) to Google Sheet"
+                          title="Save details (Invoice #, Supplier, Date, PO #, Description, Qty, Unit Price, Total Payable, Confidence, Payment Method, Matching Status) to Google Sheet"
                         >
                           {isExporting ? (
                             <>

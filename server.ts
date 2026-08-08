@@ -79,6 +79,32 @@ const invoiceExtractionSchema = {
     taxAmount: fieldSchema,
     totalAmount: fieldSchema,
     bankDetails: fieldSchema,
+    lineItems: {
+      type: Type.ARRAY,
+      description: 'Line item details extracted from the invoice table required for Three-Way Matching. Extract each line item separately with Item Description, Quantity, Unit Price, and Amount. If a field is not present, set to "Not stated".',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          description: {
+            type: Type.STRING,
+            description: 'Item or service description. If not present, set to "Not stated".',
+          },
+          quantity: {
+            type: Type.STRING,
+            description: 'Quantity purchased (e.g., "10", "1"). If not present, set to "Not stated".',
+          },
+          unitPrice: {
+            type: Type.STRING,
+            description: 'Unit price per item (e.g., "50.00"). If not present, set to "Not stated".',
+          },
+          amount: {
+            type: Type.STRING,
+            description: 'Line total amount. If not present, set to "Not stated".',
+          },
+        },
+        required: ["description", "quantity", "unitPrice", "amount"],
+      },
+    },
     assistantSummary: {
       type: Type.STRING,
       description: 'Concise summary for Madam Lim (Accounts Executive) reviewing this invoice.',
@@ -140,6 +166,14 @@ EXTRACTION GUIDELINES FOR PAYMENT METHOD VS PAYMENT TERMS & TAX AMOUNT & SUPPLIE
 - "supplierRegNo": Extract Supplier Business Registration Number / Tax ID / GST No / UEN if present. If the invoice does NOT contain a supplier registration number or tax ID, set value to "Not stated", confidence to "Not stated", colour to "grey", reason to "Supplier registration or tax ID was not provided on the invoice.", and reviewRequired to false.
 - STRICT RULE: DO NOT put payment methods (such as Bank Transfer, PayNow, Cheque, Cash, Credit Card) under paymentTerms. They belong strictly under paymentMethod. If an invoice has a payment method but no payment terms, paymentMethod should be extracted (e.g. "Bank Transfer") and paymentTerms MUST be set to "Not stated".
 - "bankDetails": Extract supplier bank account details (Bank Name, Account Number, SWIFT/IBAN, PayNow UEN/ID). If not present, set to "Missing".
+- "lineItems": Extract ALL individual line items separately from the invoice table for Three-Way Matching.
+  For each line item, extract:
+  1. Item Description (description)
+  2. Quantity (quantity)
+  3. Unit Price (unitPrice)
+  4. Amount (amount)
+  CRITICAL: Preserve the exact row relationship between description, quantity, and unit price for each item.
+  CRITICAL: If a field is genuinely not present on the invoice or line item, set its value to "Not stated" instead of leaving it blank or empty string.
 
 FIELDS TO EXTRACT:
 - supplierName: Supplier / Vendor Name
@@ -155,9 +189,10 @@ FIELDS TO EXTRACT:
 - taxAmount: Tax / GST / VAT amount ONLY if explicitly stated on document. Set to "Not stated" with confidence "Not stated" and note "No separate tax amount found on the invoice." if not stated on document.
 - totalAmount: Grand total payable
 - bankDetails: Supplier Bank Account Details (e.g. Bank Name, Account Number, SWIFT/IBAN, PayNow UEN/ID)
+- lineItems: Array of line items with description, quantity, unitPrice, amount. If a field is missing, set to "Not stated".
 `;
 
-    const promptText = `Please analyze this ${sourceType || 'invoice'} document (${filename || 'invoice'}) and extract all 13 key invoice fields according to the schema. Evaluate confidence and flags for Madam Lim's review.`;
+    const promptText = `Please analyze this ${sourceType || 'invoice'} document (${filename || 'invoice'}) and extract all key invoice fields plus all individual line items (Item Description, Quantity, Unit Price) required for Three-Way Matching according to the schema. Evaluate confidence and flags for Madam Lim's review.`;
 
     const candidateModels = [
       "gemini-3.6-flash",
@@ -243,6 +278,14 @@ FIELDS TO EXTRACT:
         },
         totalAmount: createFallbackField("0.00", "Total unverified - please verify total payable"),
         bankDetails: createFallbackField("Unclear", "Please check bank details on document"),
+        lineItems: [
+          {
+            description: "Unclear - Please Review",
+            quantity: "Not stated",
+            unitPrice: "Not stated",
+            amount: "Not stated",
+          },
+        ],
         assistantSummary: "Document uploaded successfully. AI rate limit reached - marked all fields for Madam Lim's manual review.",
         assistantWarnings: ["AI rate limit reached during extraction. Please inspect document and confirm fields."],
       };
@@ -440,6 +483,25 @@ FIELDS TO EXTRACT:
           extractedData.supplierRegNo.reviewRequired = false;
         }
       }
+
+      // 6. Clean and format lineItems
+      if (!extractedData.lineItems || !Array.isArray(extractedData.lineItems) || extractedData.lineItems.length === 0) {
+        extractedData.lineItems = [
+          {
+            description: "Not stated",
+            quantity: "Not stated",
+            unitPrice: "Not stated",
+            amount: "Not stated",
+          },
+        ];
+      } else {
+        extractedData.lineItems = extractedData.lineItems.map((item: any) => ({
+          description: item.description && String(item.description).trim() && String(item.description).trim().toLowerCase() !== 'missing' ? String(item.description).trim() : "Not stated",
+          quantity: item.quantity && String(item.quantity).trim() && String(item.quantity).trim().toLowerCase() !== 'missing' ? String(item.quantity).trim() : "Not stated",
+          unitPrice: item.unitPrice && String(item.unitPrice).trim() && String(item.unitPrice).trim().toLowerCase() !== 'missing' ? String(item.unitPrice).trim() : "Not stated",
+          amount: item.amount && String(item.amount).trim() && String(item.amount).trim().toLowerCase() !== 'missing' ? String(item.amount).trim() : "Not stated",
+        }));
+      }
     }
 
     if (!extractedData) {
@@ -485,6 +547,14 @@ FIELDS TO EXTRACT:
         },
         totalAmount: createFallbackField("0.00", "Total unverified - please verify total payable"),
         bankDetails: createFallbackField("Unclear", "Please check bank details on document"),
+        lineItems: [
+          {
+            description: "Unclear - Please Review",
+            quantity: "Not stated",
+            unitPrice: "Not stated",
+            amount: "Not stated",
+          },
+        ],
         assistantSummary: "Document uploaded successfully. Extraction required manual review by Madam Lim.",
         assistantWarnings: ["Please inspect document and confirm fields before marking as reviewed."],
       };

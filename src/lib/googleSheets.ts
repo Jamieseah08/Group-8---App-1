@@ -7,6 +7,9 @@ export const SPREADSHEET_URL = `https://docs.google.com/spreadsheets/d/${SPREADS
 export interface ExportResult {
   success: boolean;
   message: string;
+  actionType?: 'saved' | 'updated' | 'mixed';
+  savedCount?: number;
+  updatedCount?: number;
   updatedRows?: number;
 }
 
@@ -15,10 +18,12 @@ export const HEADERS = [
   'Supplier Name',
   'Invoice Date',
   'PO Number',
+  'Item Description',
+  'Quantity',
+  'Unit Price',
   'Total Payable Amount',
   'Extraction Confidence',
   'Payment Method',
-  'Review Status',
   'Matching Status',
 ];
 
@@ -33,7 +38,7 @@ export function isEligibleForExport(inv: InvoiceRecord): boolean {
   return isMatchingReady && isNotDuplicate && isNotUnderReview;
 }
 
-export function formatInvoiceRow(inv: InvoiceRecord): string[] {
+export function formatInvoiceRows(inv: InvoiceRecord): string[][] {
   const invoiceNumber = inv.fields.invoiceNumber?.value || 'N/A';
 
   const supplierName =
@@ -58,21 +63,36 @@ export function formatInvoiceRow(inv: InvoiceRecord): string[] {
 
   const paymentMethod = inv.fields.paymentMethod?.value || 'Not stated';
 
-  const reviewStatus = 'Reviewed';
-
   const matchingStatus = 'Ready for Three-Way Matching';
 
-  return [
+  const items =
+    inv.lineItems && inv.lineItems.length > 0
+      ? inv.lineItems
+      : [
+          {
+            description: 'Not stated',
+            quantity: 'Not stated',
+            unitPrice: 'Not stated',
+          },
+        ];
+
+  return items.map((item) => [
     invoiceNumber,
     supplierName,
     invoiceDate,
     poNumber,
+    item.description || 'Not stated',
+    item.quantity || 'Not stated',
+    item.unitPrice || 'Not stated',
     totalPayableAmount,
     extractionConfidence,
     paymentMethod,
-    reviewStatus,
     matchingStatus,
-  ];
+  ]);
+}
+
+export function formatInvoiceRow(inv: InvoiceRecord): string[] {
+  return formatInvoiceRows(inv)[0];
 }
 
 export async function appendInvoiceToSheet(
@@ -88,89 +108,91 @@ export async function appendInvoiceToSheet(
   if (invoiceList.length === 0) {
     return {
       success: false,
-      message: 'No eligible invoices to export. Invoices must be reviewed by Madam Lim and ready for Three-Way Matching.',
+      message:
+        'No eligible invoices to export. Invoices must be reviewed by Madam Lim and ready for Three-Way Matching.',
     };
   }
 
   try {
-    // 1. Check if range exists or has headers
-    const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/'${SHEET_NAME}'!A1:I1`;
-    const checkRes = await fetch(checkUrl, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
+    // 1. Fetch current values from Google Sheet
+    const { values: rawValues, sheetTabUsed } = await getExistingSheetValues(accessToken);
 
-    let needsHeaders = false;
-    if (checkRes.ok) {
-      const checkData = await checkRes.json();
-      if (!checkData.values || checkData.values.length === 0) {
-        needsHeaders = true;
-      }
-    } else {
-      needsHeaders = true;
-    }
+    // 2. Ensure headers exist
+    let sheetRows = ensureHeaders(rawValues);
 
-    const rowsToAppend: string[][] = [];
-    if (needsHeaders) {
-      rowsToAppend.push(HEADERS);
-    }
+    let savedCount = 0;
+    let updatedCount = 0;
 
     for (const inv of invoiceList) {
-      rowsToAppend.push(formatInvoiceRow(inv));
-    }
+      const invNum = (inv.fields.invoiceNumber?.value || 'N/A').trim().toLowerCase();
+      const supplierName =
+        inv.fields.supplierName?.value !== 'Missing' && inv.fields.supplierName?.value
+          ? inv.fields.supplierName.value
+          : inv.filename;
+      const supplier = supplierName.trim().toLowerCase();
 
-    const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/'${SHEET_NAME}'!A:I:append?valueInputOption=USER_ENTERED`;
+      const newFormattedRows = formatInvoiceRows(inv);
 
-    const response = await fetch(appendUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        range: `'${SHEET_NAME}'!A:I`,
-        majorDimension: 'ROWS',
-        values: rowsToAppend,
-      }),
-    });
+      // Find all matching row indices in sheetRows (Supplier Name + Invoice Number)
+      const matchingIndices: number[] = [];
+      for (let i = 1; i < sheetRows.length; i++) {
+        const rowInvNum = (sheetRows[i][0] || '').trim().toLowerCase();
+        const rowSupplier = (sheetRows[i][1] || '').trim().toLowerCase();
 
-    if (!response.ok) {
-      const errJson = await response.json().catch(() => ({}));
-      const errorDetail = errJson.error?.message || response.statusText;
-      
-      // Fallback: if 'Reviewed_Invoices' tab doesn't exist yet, try appending to default range or A:I
-      if (errorDetail.includes('Unable to parse range') || response.status === 400) {
-        const fallbackUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:I:append?valueInputOption=USER_ENTERED`;
-        const fallbackRes = await fetch(fallbackUrl, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            range: 'A:I',
-            majorDimension: 'ROWS',
-            values: rowsToAppend,
-          }),
-        });
-
-        if (fallbackRes.ok) {
-          return {
-            success: true,
-            message: `Successfully saved ${invoiceList.length} invoice(s) to Google Sheet!`,
-            updatedRows: invoiceList.length,
-          };
+        if (rowInvNum === invNum && rowSupplier === supplier) {
+          matchingIndices.push(i);
         }
       }
 
-      throw new Error(`Google Sheets API Error: ${errorDetail}`);
+      if (matchingIndices.length > 0) {
+        // Match found -> Update existing row(s)
+        updatedCount++;
+        const firstMatchIndex = matchingIndices[0];
+
+        // Remove old matching row(s) from back to front
+        for (let i = matchingIndices.length - 1; i >= 0; i--) {
+          sheetRows.splice(matchingIndices[i], 1);
+        }
+
+        // Insert updated row(s) at position of first match
+        sheetRows.splice(firstMatchIndex, 0, ...newFormattedRows);
+      } else {
+        // No match -> Append as new row(s)
+        savedCount++;
+        sheetRows.push(...newFormattedRows);
+      }
+    }
+
+    // 3. Save full updated dataset back to Google Sheet
+    await writeSheetValues(accessToken, sheetTabUsed, sheetRows);
+
+    let statusText = '';
+    let actionType: 'saved' | 'updated' | 'mixed' = 'saved';
+
+    if (savedCount > 0 && updatedCount === 0) {
+      actionType = 'saved';
+      statusText =
+        invoiceList.length === 1
+          ? 'Saved to Google Sheet'
+          : `Saved ${savedCount} invoice(s) to Google Sheet`;
+    } else if (updatedCount > 0 && savedCount === 0) {
+      actionType = 'updated';
+      statusText =
+        invoiceList.length === 1
+          ? 'Updated in Google Sheet'
+          : `Updated ${updatedCount} invoice(s) in Google Sheet`;
+    } else {
+      actionType = 'mixed';
+      statusText = `Saved ${savedCount} new and updated ${updatedCount} existing invoice(s) in Google Sheet`;
     }
 
     return {
       success: true,
-      message: `Successfully saved ${invoiceList.length} invoice(s) to sheet "${SHEET_NAME}"!`,
-      updatedRows: invoiceList.length,
+      message: `${statusText}!`,
+      actionType,
+      savedCount,
+      updatedCount,
+      updatedRows: sheetRows.length - 1,
     };
   } catch (err: any) {
     console.error('Failed to export to Google Sheets:', err);
@@ -178,6 +200,102 @@ export async function appendInvoiceToSheet(
       success: false,
       message: err.message || 'Failed to save to Google Sheet. Please check permissions.',
     };
+  }
+}
+
+async function getExistingSheetValues(accessToken: string): Promise<{
+  values: string[][];
+  sheetTabUsed: string;
+}> {
+  // 1. Try reading with SHEET_NAME ('Reviewed_Invoices')
+  const urlWithTab = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/'${SHEET_NAME}'!A:K`;
+  const resWithTab = await fetch(urlWithTab, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (resWithTab.ok) {
+    const data = await resWithTab.json();
+    return {
+      values: data.values || [],
+      sheetTabUsed: SHEET_NAME,
+    };
+  }
+
+  // 2. Fallback to default sheet range A:K
+  const urlDefault = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:K`;
+  const resDefault = await fetch(urlDefault, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (resDefault.ok) {
+    const data = await resDefault.json();
+    return {
+      values: data.values || [],
+      sheetTabUsed: '',
+    };
+  }
+
+  return {
+    values: [],
+    sheetTabUsed: SHEET_NAME,
+  };
+}
+
+function ensureHeaders(rows: string[][]): string[][] {
+  if (rows.length === 0) {
+    return [HEADERS];
+  }
+  const firstRow = rows[0];
+  const firstCell = (firstRow[0] || '').trim().toLowerCase();
+  const secondCell = (firstRow[1] || '').trim().toLowerCase();
+
+  if (firstCell !== 'invoice number' && secondCell !== 'supplier name') {
+    return [HEADERS, ...rows];
+  }
+  return rows;
+}
+
+async function writeSheetValues(
+  accessToken: string,
+  sheetTabUsed: string,
+  values: string[][]
+): Promise<void> {
+  const rangePrefix = sheetTabUsed ? `'${sheetTabUsed}'!` : '';
+  const rangeA_K = `${rangePrefix}A:K`;
+  const rangeA1 = `${rangePrefix}A1`;
+
+  // Clear old contents first to remove stale rows if dataset shrank
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${rangeA_K}:clear`;
+  await fetch(clearUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  }).catch((err) => {
+    console.warn('Clear range notice:', err);
+  });
+
+  // Write updated row matrix
+  const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${rangeA1}?valueInputOption=USER_ENTERED`;
+  const updateRes = await fetch(updateUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      range: rangeA1,
+      majorDimension: 'ROWS',
+      values: values,
+    }),
+  });
+
+  if (!updateRes.ok) {
+    const errJson = await updateRes.json().catch(() => ({}));
+    const errorDetail = errJson.error?.message || updateRes.statusText;
+    throw new Error(`Google Sheets API Error: ${errorDetail}`);
   }
 }
 

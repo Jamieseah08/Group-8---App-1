@@ -53,6 +53,14 @@ export type InvoiceStatus =
   | 'Reviewed'
   | 'Ready for Three-Way Matching';
 
+export interface LineItem {
+  id?: string;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  amount?: string;
+}
+
 export interface InvoiceRecord {
   id: string;
   filename: string;
@@ -64,6 +72,9 @@ export interface InvoiceRecord {
   reviewConfirmed: boolean;
   reviewedBy?: string;
   reviewedAt?: string;
+
+  // Extracted line item details required for Three-Way Matching
+  lineItems?: LineItem[];
 
   // Extracted fields map keyed by field identifier
   fields: {
