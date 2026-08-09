@@ -113,8 +113,8 @@ export const InvoiceListTable: React.FC<InvoiceListTableProps> = ({
       case 'Needs Review':
       default:
         return (
-          <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-            <AlertTriangle className="w-3 h-3 text-rose-600" />
+          <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+            <AlertTriangle className="w-3 h-3 text-amber-600" />
             <span>Needs Review</span>
           </span>
         );

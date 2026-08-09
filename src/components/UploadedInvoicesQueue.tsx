@@ -62,8 +62,8 @@ export const UploadedInvoicesQueue: React.FC<UploadedInvoicesQueueProps> = ({
       case 'Needs Review':
       default:
         return (
-          <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
-            <AlertTriangle className="w-2.5 h-2.5 text-rose-600 shrink-0" />
+          <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+            <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
             <span>Needs Review</span>
           </span>
         );
